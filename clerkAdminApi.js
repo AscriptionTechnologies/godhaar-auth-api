@@ -151,7 +151,7 @@ app.delete('/user/:userId', async (req, res) => {
  */
 app.get('/user/list', async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 50;
+    const limit = parseInt(req.query.limit) || 0;
     const offset = parseInt(req.query.offset) || 0;
     const users = await clerk.users.getUserList({ limit, offset });
     res.json(users);
