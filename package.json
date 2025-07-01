@@ -4,7 +4,6 @@
   "main": "clerkAdminApi.js",
   "scripts": {
     "start": "node clerkAdminApi.js",
-    "dev": "nodemon clerkAdminApi.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
