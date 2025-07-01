@@ -3,6 +3,7 @@ const { Clerk } = require('@clerk/clerk-sdk-node');
 const swaggerUi = require('swagger-ui-express');
 const swaggerJSDoc = require('swagger-jsdoc');
 require('dotenv').config();
+const cors = require('cors');
 
 // --- Global Error Handlers ---
 process.on('uncaughtException', err => {
@@ -14,6 +15,7 @@ process.on('unhandledRejection', err => {
 
 const app = express();
 app.use(express.json());
+app.use(cors());
 
 // --- Clerk Initialization ---
 const clerk = new Clerk({ secretKey: 'sk_live_iw5EKsXOFqQFJdyXCMdawwVo5y3NJyJAWGwx3ZISH5' });
