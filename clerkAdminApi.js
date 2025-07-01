@@ -47,7 +47,7 @@ app.use((req, res, next) => {
   next();
 });
 
-const clerk = new Clerk({ secretKey: 'sk_live_iw5EKsXOFqQFJdyXCMdawwVo5y3NJyJAWGwx3ZISH5' });
+const clerk = new Clerk({ secretKey: 'sk_live_iw5EKsXOFqQFJdyXCMdawwVo5y3NJyJAWGwx3ZISH5git' });
 
 // --- Docs Endpoint ---
 /**
@@ -480,7 +480,7 @@ app.post('/user/reset-password/:userId', async (req, res) => {
   }
 });
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Clerk Admin API running on port ${PORT}`);
 }); 
