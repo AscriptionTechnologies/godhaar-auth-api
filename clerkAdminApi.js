@@ -80,6 +80,9 @@ app.use((req, res, next) => {
  *                 type: string
  *               phoneNumber:
  *                 type: string
+ *               unsafeMetadata:
+ *                 type: object
+ *                 description: Arbitrary metadata to store in Clerk's unsafeMetadata field
  *     responses:
  *       201:
  *         description: User created
@@ -88,13 +91,14 @@ app.use((req, res, next) => {
  */
 app.post('/user', async (req, res) => {
   try {
-    const { email, password, firstName, lastName, phoneNumber } = req.body;
+    const { email, password, firstName, lastName, phoneNumber, unsafeMetadata } = req.body;
     const user = await clerk.users.createUser({
       emailAddress: [email],
       password,
       firstName,
       lastName,
       phoneNumber,
+      ...(unsafeMetadata ? { unsafeMetadata } : {})
     });
     res.status(201).json(user);
   } catch (error) {
