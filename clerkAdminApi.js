@@ -13,9 +13,9 @@ app.use(express.json());
 const swaggerDefinition = {
   openapi: '3.0.0',
   info: {
-    title: 'Clerk Admin API',
+    title: 'Godhaar Auth Admin API',
     version: '1.0.0',
-    description: 'API for super admin management of Clerk users',
+    description: 'API for super admin management of Godhaar users',
   },
   servers: [
     { url: 'http://localhost:3000', description: 'Local server' }
