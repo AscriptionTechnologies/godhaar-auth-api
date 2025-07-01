@@ -1,13 +1,22 @@
 const express = require('express');
-const fs = require('fs');
-const path = require('path');
 const { Clerk } = require('@clerk/clerk-sdk-node');
 const swaggerUi = require('swagger-ui-express');
 const swaggerJSDoc = require('swagger-jsdoc');
 require('dotenv').config();
 
+// --- Global Error Handlers ---
+process.on('uncaughtException', err => {
+  console.error('Uncaught Exception:', err);
+});
+process.on('unhandledRejection', err => {
+  console.error('Unhandled Rejection:', err);
+});
+
 const app = express();
 app.use(express.json());
+
+// --- Clerk Initialization ---
+const clerk = new Clerk({ secretKey: 'sk_live_iw5EKsXOFqQFJdyXCMdawwVo5y3NJyJAWGwx3ZISH5' });
 
 // --- Swagger/OpenAPI Setup ---
 const swaggerDefinition = {
@@ -18,15 +27,14 @@ const swaggerDefinition = {
     description: 'API for super admin management of Godhaar users',
   },
   servers: [
-    { url: 'http://localhost:3000', description: 'Local server' }
+    { url: 'http://localhost:3000', description: 'Local server' },
+    { url: 'https://godhaar-auth-api-202045537230.asia-south1.run.app/', description: 'Production server' }
   ],
 };
-
 const swaggerOptions = {
   swaggerDefinition,
   apis: [__filename],
 };
-
 const swaggerSpec = swaggerJSDoc(swaggerOptions);
 app.use('/swagger', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 app.get('/swagger.json', (req, res) => res.json(swaggerSpec));
@@ -37,7 +45,6 @@ app.use((req, res, next) => {
   if (req.body && typeof req.body === 'object' && Object.keys(req.body).length) {
     console.log('[Request Body]', JSON.stringify(req.body, null, 2));
   }
-  // Capture response body
   const oldJson = res.json;
   res.json = function (body) {
     console.log(`[Response] ${res.statusCode} ${req.method} ${req.originalUrl}`);
@@ -47,13 +54,11 @@ app.use((req, res, next) => {
   next();
 });
 
-const clerk = new Clerk({ secretKey: 'sk_live_iw5EKsXOFqQFJdyXCMdawwVo5y3NJyJAWGwx3ZISH5git' });
-
-// --- Clerk User Management Endpoints (RESTful, action-specific) ---
+// --- Clerk User Management Endpoints ---
 
 /**
  * @swagger
- * /user/create:
+ * /user:
  *   post:
  *     summary: Create a new user
  *     requestBody:
@@ -79,7 +84,7 @@ const clerk = new Clerk({ secretKey: 'sk_live_iw5EKsXOFqQFJdyXCMdawwVo5y3NJyJAWG
  *       400:
  *         description: Error
  */
-app.post('/user/create', async (req, res) => {
+app.post('/user', async (req, res) => {
   try {
     const { email, password, firstName, lastName, phoneNumber } = req.body;
     const user = await clerk.users.createUser({
@@ -97,7 +102,7 @@ app.post('/user/create', async (req, res) => {
 
 /**
  * @swagger
- * /user/delete/{userId}:
+ * /user/{userId}:
  *   delete:
  *     summary: Delete a user
  *     parameters:
@@ -112,7 +117,7 @@ app.post('/user/create', async (req, res) => {
  *       400:
  *         description: Error
  */
-app.delete('/user/delete/:userId', async (req, res) => {
+app.delete('/user/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
     await clerk.users.deleteUser(userId);
@@ -157,7 +162,7 @@ app.get('/user/list', async (req, res) => {
 
 /**
  * @swagger
- * /user/get/{userId}:
+ * /user/{userId}:
  *   get:
  *     summary: Get a single user
  *     parameters:
@@ -172,7 +177,7 @@ app.get('/user/list', async (req, res) => {
  *       404:
  *         description: Not found
  */
-app.get('/user/get/:userId', async (req, res) => {
+app.get('/user/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
     const user = await clerk.users.getUser(userId);
@@ -184,7 +189,7 @@ app.get('/user/get/:userId', async (req, res) => {
 
 /**
  * @swagger
- * /user/update/{userId}:
+ * /user/{userId}:
  *   patch:
  *     summary: Update user profile fields
  *     parameters:
@@ -214,7 +219,7 @@ app.get('/user/get/:userId', async (req, res) => {
  *       400:
  *         description: Error
  */
-app.patch('/user/update/:userId', async (req, res) => {
+app.patch('/user/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
     const { email, firstName, lastName, phoneNumber } = req.body;
@@ -232,7 +237,7 @@ app.patch('/user/update/:userId', async (req, res) => {
 
 /**
  * @swagger
- * /user/password/:userId:
+ * /user/password/{userId}:
  *   patch:
  *     summary: Change user password
  *     parameters:
@@ -404,7 +409,8 @@ app.post('/user/reset-password/:userId', async (req, res) => {
   }
 });
 
+// --- Start Server ---
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Clerk Admin API running on port ${PORT}`);
+  console.log(`Godhaar Auth Admin API running on port ${PORT}`);
 }); 

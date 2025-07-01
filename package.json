@@ -4,6 +4,7 @@
   "main": "clerkAdminApi.js",
   "scripts": {
     "start": "node clerkAdminApi.js",
+    "dev": "nodemon clerkAdminApi.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
@@ -14,6 +15,7 @@
     "dotenv": "^17.0.0",
     "express": "^5.1.0",
     "marked": "^16.0.0",
+    "nodemon": "^3.1.10",
     "serverless-http": "^3.2.0",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1"
