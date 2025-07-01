@@ -29,7 +29,7 @@ const swaggerDefinition = {
     description: 'API for super admin management of Godhaar users',
   },
   servers: [
-    { url: 'http://localhost:3000', description: 'Local server' },
+    { url: 'http://localhost:8080', description: 'Local server' },
     { url: 'https://godhaar-auth-api-202045537230.asia-south1.run.app/', description: 'Production server' }
   ],
 };
@@ -412,7 +412,7 @@ app.post('/user/reset-password/:userId', async (req, res) => {
 });
 
 // --- Start Server ---
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`Godhaar Auth Admin API running on port ${PORT}`);
 }); 
