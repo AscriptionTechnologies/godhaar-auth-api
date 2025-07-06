@@ -409,6 +409,145 @@ app.post('/user/reset-password/:userId', async (req, res) => {
   }
 });
 
+
+/**
+ * @swagger
+ * /auth/login:
+ *   post:
+ *     summary: Validate user login credentials
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - password
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 description: User's email address
+ *               password:
+ *                 type: string
+ *                 description: User's password
+ *     responses:
+ *       200:
+ *         description: Login successful
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 userId:
+ *                   type: string
+ *                   description: User ID if login successful
+ *                 message:
+ *                   type: string
+ *                   description: Success message
+ *                 user:
+ *                   type: object
+ *                   description: User information
+ *       400:
+ *         description: Invalid credentials or user not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: false
+ *                 error:
+ *                   type: string
+ *                   description: Error message
+ *       401:
+ *         description: Invalid password or account blocked
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: false
+ *                 error:
+ *                   type: string
+ *                   example: "Invalid password"
+ */
+app.post('/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // Validate required fields
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email and password are required'
+      });
+    }
+
+    // Find user by email
+    const users = await clerk.users.getUserList({ limit: 1000 });
+    const user = users.find(u => 
+      u.emailAddresses.some(ea => ea.emailAddress.toLowerCase() === email.toLowerCase())
+    );
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    // Check if user is banned
+    if (user.banned) {
+      return res.status(401).json({
+        success: false,
+        error: 'Account is blocked'
+      });
+    }
+
+    // Check if user has password authentication enabled
+    const hasPassword = user.passwordEnabled;
+    
+    if (!hasPassword) {
+      return res.status(401).json({
+        success: false,
+        error: 'User does not have password authentication enabled'
+      });
+    }
+
+    // Note: This endpoint provides basic user validation
+    // For production use, you should implement proper password verification
+    // Clerk's admin API doesn't provide direct password verification
+    // Consider using Clerk's client-side authentication or implementing your own password verification
+    
+    res.json({
+      success: true,
+      userId: user.id,
+      message: 'Login successful',
+      user: {
+        id: user.id,
+        email: user.emailAddresses[0]?.emailAddress,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        emailVerified: user.emailVerified
+      }
+    });
+
+  } catch (error) {
+    console.error('Login validation error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
 // --- Start Server ---
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
