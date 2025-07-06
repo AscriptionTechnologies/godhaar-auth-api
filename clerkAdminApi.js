@@ -151,7 +151,7 @@ app.delete('/user/:userId', async (req, res) => {
  */
 app.get('/user/list', async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 500;
+    const limit = parseInt(req.query.limit) || 1000;
     const offset = parseInt(req.query.offset) || 0;
     const users = await clerk.users.getUserList({ limit, offset });
     res.json(users);
@@ -293,8 +293,26 @@ app.get('/user/search', async (req, res) => {
   try {
     const { email } = req.query;
     if (!email) return res.status(400).json({ error: 'Missing email query param' });
-    const users = await clerk.users.getUserList({ limit: 200 });
-    const filtered = users.filter(u => u.emailAddresses.some(ea => ea.emailAddress.includes(email)));
+    
+    // Fetch all users with pagination
+    let allUsers = [];
+    let offset = 0;
+    const limit = 1000;
+    
+    while (true) {
+      const users = await clerk.users.getUserList({ limit, offset });
+      if (users.length === 0) break;
+      
+      allUsers = allUsers.concat(users);
+      offset += limit;
+      
+      // Safety check
+      if (offset > 10000) break;
+    }
+    
+    const filtered = allUsers.filter(u => 
+      u.emailAddresses.some(ea => ea.emailAddress.includes(email))
+    );
     res.json(filtered);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -409,7 +427,6 @@ app.post('/user/reset-password/:userId', async (req, res) => {
   }
 });
 
-
 /**
  * @swagger
  * /auth/login:
@@ -490,10 +507,38 @@ app.post('/auth/login', async (req, res) => {
       });
     }
 
-    // Find user by email
-    const users = await clerk.users.getUserList({ limit: 1000 });
-    const user = users.find(u => 
-      u.emailAddresses.some(ea => ea.emailAddress.toLowerCase() === email.toLowerCase())
+    // Find user by email - fetch all users with pagination
+    let allUsers = [];
+    let offset = 0;
+    const limit = 1000; // Fetch 1000 users at a time
+    
+    try {
+      while (true) {
+        const users = await clerk.users.getUserList({ limit, offset });
+        if (users.length === 0) break; // No more users to fetch
+        
+        allUsers = allUsers.concat(users);
+        offset += limit;
+        
+        // Safety check to prevent infinite loops
+        if (offset > 10000) {
+          console.warn('Reached maximum user fetch limit (10,000)');
+          break;
+        }
+      }
+      
+
+    } catch (apiError) {
+      console.error('Error fetching users:', apiError);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to fetch users from Clerk'
+      });
+    }
+    
+    // Find user by email (case-insensitive)
+    const user = allUsers.find(u => 
+      u.emailAddresses?.some(ea => ea.emailAddress?.toLowerCase() === email.toLowerCase())
     );
 
     if (!user) {
@@ -545,6 +590,46 @@ app.post('/auth/login', async (req, res) => {
       success: false,
       error: 'Internal server error'
     });
+  }
+});
+
+/**
+ * @swagger
+ * /debug/user-count:
+ *   get:
+ *     summary: Debug endpoint to count total users (for troubleshooting)
+ *     responses:
+ *       200:
+ *         description: Total user count
+ */
+app.get('/debug/user-count', async (req, res) => {
+  try {
+    let allUsers = [];
+    let offset = 0;
+    const limit = 1000;
+    
+    while (true) {
+      const users = await clerk.users.getUserList({ limit, offset });
+      if (users.length === 0) break;
+      
+      allUsers = allUsers.concat(users);
+      offset += limit;
+      
+      // Safety check
+      if (offset > 10000) {
+        console.warn('Reached maximum user fetch limit (10,000)');
+        break;
+      }
+    }
+    
+    res.json({
+      totalUsers: allUsers.length,
+      batches: Math.ceil(allUsers.length / limit),
+      sampleEmails: allUsers.slice(0, 5).map(u => u.emailAddresses?.[0]?.emailAddress || 'No email')
+    });
+  } catch (error) {
+    console.error('Debug user count error:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
