@@ -507,27 +507,29 @@ app.post('/auth/login', async (req, res) => {
       });
     }
 
-    // Find user by email - fetch all users with pagination
-    let allUsers = [];
-    let offset = 0;
-    const limit = 1000; // Fetch 1000 users at a time
-    
+    // Find user by email - fetch all users with Clerk's hard limit (10 per page)
+    let user = null;
     try {
+      let allUsers = [];
+      let offset = 0;
+      const limit = 10; // Clerk's hard limit
+      let batch = 1;
       while (true) {
         const users = await clerk.users.getUserList({ limit, offset });
-        if (users.length === 0) break; // No more users to fetch
-        
+        console.log(`[DEBUG] Batch ${batch}: Fetched ${users.length} users (requested ${limit})`);
+        if (users.length === 0) break;
         allUsers = allUsers.concat(users);
         offset += limit;
-        
-        // Safety check to prevent infinite loops
+        batch++;
         if (offset > 10000) {
           console.warn('Reached maximum user fetch limit (10,000)');
           break;
         }
       }
-      
-
+      // Find user by email (case-insensitive)
+      user = allUsers.find(u =>
+        u.emailAddresses?.some(ea => ea.emailAddress?.toLowerCase() === email.toLowerCase())
+      );
     } catch (apiError) {
       console.error('Error fetching users:', apiError);
       return res.status(500).json({
@@ -535,11 +537,6 @@ app.post('/auth/login', async (req, res) => {
         error: 'Failed to fetch users from Clerk'
       });
     }
-    
-    // Find user by email (case-insensitive)
-    const user = allUsers.find(u => 
-      u.emailAddresses?.some(ea => ea.emailAddress?.toLowerCase() === email.toLowerCase())
-    );
 
     if (!user) {
       return res.status(400).json({
@@ -606,25 +603,23 @@ app.get('/debug/user-count', async (req, res) => {
   try {
     let allUsers = [];
     let offset = 0;
-    const limit = 1000;
-    
+    const limit = 10;
+    let batch = 1;
     while (true) {
       const users = await clerk.users.getUserList({ limit, offset });
+      console.log(`[DEBUG] Debug batch ${batch}: Fetched ${users.length} users (requested ${limit})`);
       if (users.length === 0) break;
-      
       allUsers = allUsers.concat(users);
       offset += limit;
-      
-      // Safety check
+      batch++;
       if (offset > 10000) {
         console.warn('Reached maximum user fetch limit (10,000)');
         break;
       }
     }
-    
     res.json({
       totalUsers: allUsers.length,
-      batches: Math.ceil(allUsers.length / limit),
+      batches: batch - 1,
       sampleEmails: allUsers.slice(0, 5).map(u => u.emailAddresses?.[0]?.emailAddress || 'No email')
     });
   } catch (error) {
