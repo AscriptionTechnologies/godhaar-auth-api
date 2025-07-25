@@ -567,28 +567,54 @@ app.post('/auth/login', async (req, res) => {
     // For production use, you should implement proper password verification
     // Clerk's admin API doesn't provide direct password verification
     // Consider using Clerk's client-side authentication or implementing your own password verification
-    
-    res.json({
-      success: true,
-      userId: user.id,
-      message: 'Login successful',
-      user: {
-        id: user.id,
-        email: user.emailAddresses[0]?.emailAddress,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        emailVerified: user.emailVerified
+
+  // Verify password
+    try {
+      const verification = await clerk.users.verifyPassword({
+        userId: user.id,
+        password
+      });
+
+      if (!verification.verified) {
+        return res.status(401).json({
+          success: false,
+          error: 'Invalid credentials'
+        });
       }
-    });
+
+      // If we reach here, authentication was successful
+      return res.json({
+        success: true,
+        userId: user.id,
+        message: 'Login successful',
+        user: {
+          id: user.id,
+          email: user.emailAddresses[0]?.emailAddress,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          emailVerified: user.emailVerified
+        }
+      });
+
+    } catch (verificationError) {
+      console.error('Password verification error:', verificationError);
+      return res.status(401).json({
+        success: false,
+        error: 'Authentication failed'
+      });
+    }
 
   } catch (error) {
     console.error('Login validation error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error'
     });
   }
 });
+
+    
+  
 
 /**
  * @swagger
