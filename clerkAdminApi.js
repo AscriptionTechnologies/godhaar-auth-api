@@ -9,6 +9,7 @@ const cors = require('cors');
 process.on('uncaughtException', err => {
   console.error('Uncaught Exception:', err);
 });
+
 process.on('unhandledRejection', err => {
   console.error('Unhandled Rejection:', err);
 });
@@ -33,10 +34,12 @@ const swaggerDefinition = {
     { url: 'https://godhaar-auth-api-202045537230.asia-south1.run.app/', description: 'Production server' }
   ],
 };
+
 const swaggerOptions = {
   swaggerDefinition,
   apis: [__filename],
 };
+
 const swaggerSpec = swaggerJSDoc(swaggerOptions);
 app.use('/swagger', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 app.get('/swagger.json', (req, res) => res.json(swaggerSpec));
@@ -137,7 +140,8 @@ app.delete('/user/:userId', async (req, res) => {
  *         name: limit
  *         schema:
  *           type: integer
- *         description: Max users to return
+ *           default: 900
+ *         description: Max users to return (default 900)
  *       - in: query
  *         name: offset
  *         schema:
@@ -151,7 +155,7 @@ app.delete('/user/:userId', async (req, res) => {
  */
 app.get('/user/list', async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 1000;
+    const limit = parseInt(req.query.limit) || 900; // Changed default from 1000 to 900
     const offset = parseInt(req.query.offset) || 0;
     const users = await clerk.users.getUserList({ limit, offset });
     res.json(users);
@@ -223,15 +227,95 @@ app.patch('/user/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
     const { email, firstName, lastName, phoneNumber } = req.body;
+    
     const updateData = {};
     if (email) updateData.emailAddress = [email];
     if (firstName) updateData.firstName = firstName;
     if (lastName) updateData.lastName = lastName;
     if (phoneNumber) updateData.phoneNumber = phoneNumber;
+    
     const user = await clerk.users.updateUser(userId, updateData);
     res.json(user);
   } catch (error) {
     res.status(400).json({ error: error.message });
+  }
+});
+
+/**
+ * @swagger
+ * /user/metadata/{userId}:
+ *   patch:
+ *     summary: Update user's unsafe metadata
+ *     parameters:
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               unsafeMetadata:
+ *                 type: object
+ *                 description: Arbitrary metadata to store in Clerk's unsafeMetadata field
+ *                 example:
+ *                   role: "premium"
+ *                   preferences: { theme: "dark", notifications: true }
+ *                   customData: "any value"
+ *     responses:
+ *       200:
+ *         description: User metadata updated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 user:
+ *                   type: object
+ *                   description: Updated user object
+ *       400:
+ *         description: Error updating metadata
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: false
+ *                 error:
+ *                   type: string
+ */
+app.patch('/user/metadata/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { unsafeMetadata } = req.body;
+    
+    if (!unsafeMetadata) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'unsafeMetadata is required in request body' 
+      });
+    }
+    
+    const user = await clerk.users.updateUser(userId, { unsafeMetadata });
+    
+    res.json({ 
+      success: true, 
+      user 
+    });
+  } catch (error) {
+    res.status(400).json({ 
+      success: false, 
+      error: error.message 
+    });
   }
 });
 
@@ -297,7 +381,7 @@ app.get('/user/search', async (req, res) => {
     // Fetch all users with pagination
     let allUsers = [];
     let offset = 0;
-    const limit = 1000;
+    const limit = 900; // Updated default limit
     
     while (true) {
       const users = await clerk.users.getUserList({ limit, offset });
@@ -316,6 +400,107 @@ app.get('/user/search', async (req, res) => {
     res.json(filtered);
   } catch (error) {
     res.status(400).json({ error: error.message });
+  }
+});
+
+/**
+ * @swagger
+ * /user/email/{email}:
+ *   get:
+ *     summary: Get user ID by email address
+ *     parameters:
+ *       - in: path
+ *         name: email
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Email address to search for
+ *     responses:
+ *       200:
+ *         description: User ID found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 userId:
+ *                   type: string
+ *                   description: The user ID associated with the email
+ *                 email:
+ *                   type: string
+ *                   description: The email address that was searched
+ *       404:
+ *         description: User not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: false
+ *                 error:
+ *                   type: string
+ *                   example: "User not found"
+ *       400:
+ *         description: Invalid email format or error
+ */
+app.get('/user/email/:email', async (req, res) => {
+  try {
+    const { email } = req.params;
+    
+    if (!email) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Email parameter is required' 
+      });
+    }
+    
+    // Fetch all users with pagination to find the email
+    let allUsers = [];
+    let offset = 0;
+    const limit = 900; // Updated default limit
+    
+    while (true) {
+      const users = await clerk.users.getUserList({ limit, offset });
+      if (users.length === 0) break;
+      
+      allUsers = allUsers.concat(users);
+      offset += limit;
+      
+      // Safety check to prevent infinite loops
+      if (offset > 10000) break;
+    }
+    
+    // Find user by email (case-insensitive exact match)
+    const user = allUsers.find(u => 
+      u.emailAddresses.some(ea => 
+        ea.emailAddress.toLowerCase() === email.toLowerCase()
+      )
+    );
+    
+    if (!user) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'User not found' 
+      });
+    }
+    
+    res.json({
+      success: true,
+      userId: user.id,
+      email: user.emailAddresses[0]?.emailAddress
+    });
+    
+  } catch (error) {
+    console.error('Get user by email error:', error);
+    res.status(400).json({ 
+      success: false, 
+      error: error.message 
+    });
   }
 });
 
@@ -498,7 +683,7 @@ app.post('/user/reset-password/:userId', async (req, res) => {
 app.post('/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-
+    
     // Validate required fields
     if (!email || !password) {
       return res.status(400).json({
@@ -506,26 +691,30 @@ app.post('/auth/login', async (req, res) => {
         error: 'Email and password are required'
       });
     }
-
-    // Find user by email - fetch all users with Clerk's hard limit (10 per page)
+    
+    // Find user by email - fetch all users with updated limit
     let user = null;
     try {
       let allUsers = [];
       let offset = 0;
-      const limit = 10; // Clerk's hard limit
+      const limit = 10; // Keep Clerk's pagination limit for reliability
       let batch = 1;
+      
       while (true) {
         const users = await clerk.users.getUserList({ limit, offset });
         console.log(`[DEBUG] Batch ${batch}: Fetched ${users.length} users (requested ${limit})`);
         if (users.length === 0) break;
+        
         allUsers = allUsers.concat(users);
         offset += limit;
         batch++;
+        
         if (offset > 10000) {
           console.warn('Reached maximum user fetch limit (10,000)');
           break;
         }
       }
+      
       // Find user by email (case-insensitive)
       user = allUsers.find(u =>
         u.emailAddresses?.some(ea => ea.emailAddress?.toLowerCase() === email.toLowerCase())
@@ -537,14 +726,14 @@ app.post('/auth/login', async (req, res) => {
         error: 'Failed to fetch users from Clerk'
       });
     }
-
+    
     if (!user) {
       return res.status(400).json({
         success: false,
         error: 'User not found'
       });
     }
-
+    
     // Check if user is banned
     if (user.banned) {
       return res.status(401).json({
@@ -552,7 +741,7 @@ app.post('/auth/login', async (req, res) => {
         error: 'Account is blocked'
       });
     }
-
+    
     // Check if user has password authentication enabled
     const hasPassword = user.passwordEnabled;
     
@@ -562,26 +751,21 @@ app.post('/auth/login', async (req, res) => {
         error: 'User does not have password authentication enabled'
       });
     }
-
-    // Note: This endpoint provides basic user validation
-    // For production use, you should implement proper password verification
-    // Clerk's admin API doesn't provide direct password verification
-    // Consider using Clerk's client-side authentication or implementing your own password verification
-
-  // Verify password
+    
+    // Verify password
     try {
       const verification = await clerk.users.verifyPassword({
         userId: user.id,
         password
       });
-
+      
       if (!verification.verified) {
         return res.status(401).json({
           success: false,
           error: 'Invalid credentials'
         });
       }
-
+      
       // If we reach here, authentication was successful
       return res.json({
         success: true,
@@ -595,7 +779,6 @@ app.post('/auth/login', async (req, res) => {
           emailVerified: user.emailVerified
         }
       });
-
     } catch (verificationError) {
       console.error('Password verification error:', verificationError);
       return res.status(401).json({
@@ -603,7 +786,6 @@ app.post('/auth/login', async (req, res) => {
         error: 'Authentication failed'
       });
     }
-
   } catch (error) {
     console.error('Login validation error:', error);
     return res.status(500).json({
@@ -612,9 +794,6 @@ app.post('/auth/login', async (req, res) => {
     });
   }
 });
-
-    
-  
 
 /**
  * @swagger
@@ -631,18 +810,22 @@ app.get('/debug/user-count', async (req, res) => {
     let offset = 0;
     const limit = 10;
     let batch = 1;
+    
     while (true) {
       const users = await clerk.users.getUserList({ limit, offset });
       console.log(`[DEBUG] Debug batch ${batch}: Fetched ${users.length} users (requested ${limit})`);
       if (users.length === 0) break;
+      
       allUsers = allUsers.concat(users);
       offset += limit;
       batch++;
+      
       if (offset > 10000) {
         console.warn('Reached maximum user fetch limit (10,000)');
         break;
       }
     }
+    
     res.json({
       totalUsers: allUsers.length,
       batches: batch - 1,
@@ -658,4 +841,4 @@ app.get('/debug/user-count', async (req, res) => {
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`Godhaar Auth Admin API running on port ${PORT}`);
-}); 
+});
