@@ -452,54 +452,119 @@ app.get('/user/email/:email', async (req, res) => {
   try {
     const { email } = req.params;
     
-    if (!email) {
+    console.log(`[DEBUG] Searching for user with email: ${email}`);
+    
+    if (!email || email.trim() === '') {
       return res.status(400).json({ 
         success: false, 
-        error: 'Email parameter is required' 
+        error: 'Email parameter is required and cannot be empty' 
       });
     }
     
-    // Fetch all users with pagination to find the email
+    // Decode URL-encoded email (in case it contains special characters)
+    const decodedEmail = decodeURIComponent(email.trim());
+    console.log(`[DEBUG] Decoded email: ${decodedEmail}`);
+    
+    // Fetch all users with pagination - using smaller batches for reliability
     let allUsers = [];
     let offset = 0;
-    const limit = 900; // Updated default limit
+    const limit = 100; // Smaller batch size for more reliable fetching
+    let totalFetched = 0;
+    
+    console.log('[DEBUG] Starting to fetch users...');
     
     while (true) {
-      const users = await clerk.users.getUserList({ limit, offset });
-      if (users.length === 0) break;
-      
-      allUsers = allUsers.concat(users);
-      offset += limit;
-      
-      // Safety check to prevent infinite loops
-      if (offset > 10000) break;
+      try {
+        console.log(`[DEBUG] Fetching batch: offset=${offset}, limit=${limit}`);
+        const users = await clerk.users.getUserList({ limit, offset });
+        
+        console.log(`[DEBUG] Fetched ${users.length} users in this batch`);
+        
+        if (users.length === 0) {
+          console.log('[DEBUG] No more users to fetch');
+          break;
+        }
+        
+        allUsers = allUsers.concat(users);
+        totalFetched += users.length;
+        offset += limit;
+        
+        // Safety check to prevent infinite loops
+        if (offset > 50000) {
+          console.warn('[DEBUG] Reached maximum fetch limit (50,000)');
+          break;
+        }
+        
+        // If we got less than the limit, we've reached the end
+        if (users.length < limit) {
+          console.log(`[DEBUG] Reached end of users (got ${users.length} < ${limit})`);
+          break;
+        }
+        
+      } catch (batchError) {
+        console.error(`[DEBUG] Error fetching batch at offset ${offset}:`, batchError);
+        break;
+      }
     }
     
-    // Find user by email (case-insensitive exact match)
-    const user = allUsers.find(u => 
-      u.emailAddresses.some(ea => 
-        ea.emailAddress.toLowerCase() === email.toLowerCase()
-      )
-    );
+    console.log(`[DEBUG] Total users fetched: ${totalFetched}`);
     
-    if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        error: 'User not found' 
+    if (totalFetched === 0) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to fetch any users from Clerk'
       });
     }
+    
+    // Log some sample emails for debugging
+    const sampleEmails = allUsers.slice(0, 5).map(u => {
+      const primaryEmail = u.emailAddresses?.[0]?.emailAddress || 'No email';
+      return { userId: u.id, email: primaryEmail };
+    });
+    console.log('[DEBUG] Sample users:', sampleEmails);
+    
+    // Find user by email (case-insensitive exact match)
+    console.log(`[DEBUG] Searching for exact match of: "${decodedEmail.toLowerCase()}"`);
+    
+    const user = allUsers.find(u => {
+      if (!u.emailAddresses || !Array.isArray(u.emailAddresses)) {
+        return false;
+      }
+      
+      return u.emailAddresses.some(ea => {
+        if (!ea || !ea.emailAddress) return false;
+        const userEmail = ea.emailAddress.toLowerCase();
+        const searchEmail = decodedEmail.toLowerCase();
+        console.log(`[DEBUG] Comparing: "${userEmail}" === "${searchEmail}"`);
+        return userEmail === searchEmail;
+      });
+    });
+    
+    if (!user) {
+      console.log(`[DEBUG] User not found for email: ${decodedEmail}`);
+      return res.status(404).json({ 
+        success: false, 
+        error: 'User not found',
+        searchedEmail: decodedEmail,
+        totalUsersSearched: totalFetched
+      });
+    }
+    
+    console.log(`[DEBUG] User found: ${user.id}`);
     
     res.json({
       success: true,
       userId: user.id,
-      email: user.emailAddresses[0]?.emailAddress
+      email: user.emailAddresses[0]?.emailAddress,
+      searchedEmail: decodedEmail
     });
     
   } catch (error) {
-    console.error('Get user by email error:', error);
-    res.status(400).json({ 
+    console.error('[ERROR] Get user by email error:', error);
+    res.status(500).json({ 
       success: false, 
-      error: error.message 
+      error: `Internal server error: ${error.message}`,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 });
