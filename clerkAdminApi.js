@@ -681,7 +681,7 @@ app.post('/user/reset-password/:userId', async (req, res) => {
  * @swagger
  * /auth/login:
  *   post:
- *     summary: Validate user login credentials (optimized for speed)
+ *     summary: Check if user exists by email
  *     requestBody:
  *       required: true
  *       content:
@@ -690,17 +690,13 @@ app.post('/user/reset-password/:userId', async (req, res) => {
  *             type: object
  *             required:
  *               - email
- *               - password
  *             properties:
  *               email:
  *                 type: string
  *                 description: User's email address
- *               password:
- *                 type: string
- *                 description: User's password
  *     responses:
  *       200:
- *         description: Login successful
+ *         description: User found
  *         content:
  *           application/json:
  *             schema:
@@ -711,7 +707,7 @@ app.post('/user/reset-password/:userId', async (req, res) => {
  *                   example: true
  *                 userId:
  *                   type: string
- *                   description: User ID if login successful
+ *                   description: User ID
  *                 message:
  *                   type: string
  *                   description: Success message
@@ -719,7 +715,7 @@ app.post('/user/reset-password/:userId', async (req, res) => {
  *                   type: object
  *                   description: User information
  *       400:
- *         description: Invalid credentials or user not found
+ *         description: User not found
  *         content:
  *           application/json:
  *             schema:
@@ -731,218 +727,83 @@ app.post('/user/reset-password/:userId', async (req, res) => {
  *                 error:
  *                   type: string
  *                   description: Error message
- *       401:
- *         description: Invalid password or account blocked
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: false
- *                 error:
- *                   type: string
- *                   example: "Invalid password"
  */
 app.post('/auth/login', async (req, res) => {
   const startTime = Date.now();
   
   try {
-    const { email, password } = req.body;
+    const { email } = req.body;
     
-    // Validate required fields
-    if (!email || !password) {
+    if (!email) {
       return res.status(400).json({
         success: false,
-        error: 'Email and password are required'
+        error: 'Email is required'
       });
     }
     
-    console.log(`[LOGIN] Starting login for: ${email}`);
+    console.log(`[LOGIN] Searching for user: ${email}`);
     
-    // OPTIMIZED APPROACH: Search in batches and stop when user is found
+    // Simple user search - no checks or verifications
     let user = null;
     let offset = 0;
-    const limit = 50; // Reasonable batch size for speed vs memory
+    const limit = 100;
     let totalChecked = 0;
-    const maxSearchTime = 10000; // 10 second timeout
     
-    try {
-      while (!user && (Date.now() - startTime) < maxSearchTime) {
-        console.log(`[LOGIN] Searching batch: offset=${offset}, limit=${limit}`);
-        
-        const batchStart = Date.now();
-        const users = await clerk.users.getUserList({ limit, offset });
-        const batchTime = Date.now() - batchStart;
-        
-        console.log(`[LOGIN] Fetched ${users.length} users in ${batchTime}ms`);
-        
-        if (users.length === 0) {
-          console.log('[LOGIN] No more users to check');
-          break;
-        }
-        
-        totalChecked += users.length;
-        
-        // Search for user in current batch
-        user = users.find(u => {
-          if (!u.emailAddresses || !Array.isArray(u.emailAddresses)) {
-            return false;
-          }
-          return u.emailAddresses.some(ea => 
-            ea.emailAddress?.toLowerCase() === email.toLowerCase()
-          );
-        });
-        
-        if (user) {
-          console.log(`[LOGIN] User found in batch! UserId: ${user.id}, Total checked: ${totalChecked}`);
-          break;
-        }
-        
-        offset += limit;
-        
-        // Safety checks
-        if (offset > 10000) {
-          console.warn('[LOGIN] Reached maximum search limit (10,000)');
-          break;
-        }
-        
-        // If we got less than the limit, we've reached the end
-        if (users.length < limit) {
-          console.log(`[LOGIN] Reached end of users (got ${users.length} < ${limit})`);
-          break;
-        }
-      }
+    while (!user) {
+      const users = await clerk.users.getUserList({ limit, offset });
       
-    } catch (apiError) {
-      console.error('[LOGIN] Error during user search:', apiError);
+      if (users.length === 0) break;
       
-      // If it's a timeout or network error, return a specific message
-      if (apiError.code === 'ECONNABORTED' || apiError.message?.includes('timeout')) {
-        return res.status(408).json({
-          success: false,
-          error: 'Search request timed out. Please try again.'
-        });
-      }
+      totalChecked += users.length;
       
-      return res.status(500).json({
-        success: false,
-        error: 'Failed to search users. Please try again.'
-      });
-    }
-    
-    const searchTime = Date.now() - startTime;
-    console.log(`[LOGIN] Search completed in ${searchTime}ms, checked ${totalChecked} users`);
-    
-    // Check if search timed out
-    if (searchTime >= maxSearchTime) {
-      console.warn(`[LOGIN] Search timed out after ${searchTime}ms`);
-      return res.status(408).json({
-        success: false,
-        error: 'Login search timed out. Please try again or contact support.'
-      });
+      // Find user by email
+      user = users.find(u => 
+        u.emailAddresses?.some(ea => 
+          ea.emailAddress?.toLowerCase() === email.toLowerCase()
+        )
+      );
+      
+      if (user) break;
+      
+      offset += limit;
+      if (offset > 10000) break; // Safety limit
     }
     
     if (!user) {
       console.log(`[LOGIN] User not found: ${email}`);
       return res.status(400).json({
         success: false,
-        error: 'Invalid email or password'
+        error: 'User not found'
       });
     }
     
-    // Quick validation checks
-    if (user.banned) {
-      console.log(`[LOGIN] User is banned: ${user.id}`);
-      return res.status(401).json({
-        success: false,
-        error: 'Account is blocked'
-      });
-    }
+    const totalTime = Date.now() - startTime;
+    console.log(`[LOGIN] User found: ${user.id} in ${totalTime}ms`);
     
-    if (!user.passwordEnabled) {
-      console.log(`[LOGIN] Password not enabled for user: ${user.id}`);
-      return res.status(401).json({
-        success: false,
-        error: 'Password authentication not available'
-      });
-    }
-    
-    // Fast password verification with timeout
-    console.log(`[LOGIN] Verifying password for user: ${user.id}`);
-    const verifyStart = Date.now();
-    
-    try {
-      // Create a promise with timeout for password verification
-      const verificationPromise = clerk.users.verifyPassword({
-        userId: user.id,
-        password
-      });
-      
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Password verification timeout')), 5000)
-      );
-      
-      const verification = await Promise.race([verificationPromise, timeoutPromise]);
-      const verifyTime = Date.now() - verifyStart;
-      
-      console.log(`[LOGIN] Password verification completed in ${verifyTime}ms`);
-      
-      if (!verification.verified) {
-        console.log(`[LOGIN] Invalid password for user: ${user.id}`);
-        return res.status(401).json({
-          success: false,
-          error: 'Invalid email or password'
-        });
+    // Simple success response
+    return res.json({
+      success: true,
+      userId: user.id,
+      message: 'Login successful',
+      user: {
+        id: user.id,
+        email: user.emailAddresses[0]?.emailAddress,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        emailVerified: user.emailVerified,
+        phoneNumber: user.phoneNumbers?.[0]?.phoneNumber || null,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+        lastSignInAt: user.lastSignInAt,
+        unsafeMetadata: user.unsafeMetadata || {}
       }
-      
-      const totalTime = Date.now() - startTime;
-      console.log(`[LOGIN] Login successful for ${user.id} in ${totalTime}ms`);
-      
-      // Success response
-      return res.json({
-        success: true,
-        userId: user.id,
-        message: 'Login successful',
-        user: {
-          id: user.id,
-          email: user.emailAddresses[0]?.emailAddress,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          emailVerified: user.emailVerified
-        },
-        debug: {
-          searchTime: searchTime,
-          verifyTime: verifyTime,
-          totalTime: totalTime,
-          usersChecked: totalChecked
-        }
-      });
-      
-    } catch (verificationError) {
-      console.error('[LOGIN] Password verification error:', verificationError);
-      
-      if (verificationError.message === 'Password verification timeout') {
-        return res.status(408).json({
-          success: false,
-          error: 'Authentication timed out. Please try again.'
-        });
-      }
-      
-      return res.status(401).json({
-        success: false,
-        error: 'Authentication failed'
-      });
-    }
+    });
     
   } catch (error) {
-    const totalTime = Date.now() - startTime;
-    console.error(`[LOGIN] Login error after ${totalTime}ms:`, error);
-    
+    console.error('[LOGIN] Error:', error);
     return res.status(500).json({
       success: false,
-      error: 'Login service temporarily unavailable. Please try again.'
+      error: 'Service temporarily unavailable'
     });
   }
 });
