@@ -762,7 +762,7 @@ app.post('/auth/login', async (req, res) => {
     try {
       let allUsers = [];
       let offset = 0;
-      const limit = 10; // Keep Clerk's pagination limit for reliability
+      const limit = 100; // Keep Clerk's pagination limit for reliability
       let batch = 1;
       
       while (true) {
