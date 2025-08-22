@@ -681,7 +681,7 @@ app.post('/user/reset-password/:userId', async (req, res) => {
  * @swagger
  * /auth/login:
  *   post:
- *     summary: Validate user login credentials
+ *     summary: Validate user login credentials (optimized for speed)
  *     requestBody:
  *       required: true
  *       content:
@@ -746,6 +746,8 @@ app.post('/user/reset-password/:userId', async (req, res) => {
  *                   example: "Invalid password"
  */
 app.post('/auth/login', async (req, res) => {
+  const startTime = Date.now();
+  
   try {
     const { email, password } = req.body;
     
@@ -757,81 +759,148 @@ app.post('/auth/login', async (req, res) => {
       });
     }
     
-    // Find user by email - fetch all users with updated limit
+    console.log(`[LOGIN] Starting login for: ${email}`);
+    
+    // OPTIMIZED APPROACH: Search in batches and stop when user is found
     let user = null;
+    let offset = 0;
+    const limit = 50; // Reasonable batch size for speed vs memory
+    let totalChecked = 0;
+    const maxSearchTime = 10000; // 10 second timeout
+    
     try {
-      let allUsers = [];
-      let offset = 0;
-      const limit = 100; // Keep Clerk's pagination limit for reliability
-      let batch = 1;
-      
-      while (true) {
+      while (!user && (Date.now() - startTime) < maxSearchTime) {
+        console.log(`[LOGIN] Searching batch: offset=${offset}, limit=${limit}`);
+        
+        const batchStart = Date.now();
         const users = await clerk.users.getUserList({ limit, offset });
-        console.log(`[DEBUG] Batch ${batch}: Fetched ${users.length} users (requested ${limit})`);
-        if (users.length === 0) break;
+        const batchTime = Date.now() - batchStart;
         
-        allUsers = allUsers.concat(users);
+        console.log(`[LOGIN] Fetched ${users.length} users in ${batchTime}ms`);
+        
+        if (users.length === 0) {
+          console.log('[LOGIN] No more users to check');
+          break;
+        }
+        
+        totalChecked += users.length;
+        
+        // Search for user in current batch
+        user = users.find(u => {
+          if (!u.emailAddresses || !Array.isArray(u.emailAddresses)) {
+            return false;
+          }
+          return u.emailAddresses.some(ea => 
+            ea.emailAddress?.toLowerCase() === email.toLowerCase()
+          );
+        });
+        
+        if (user) {
+          console.log(`[LOGIN] User found in batch! UserId: ${user.id}, Total checked: ${totalChecked}`);
+          break;
+        }
+        
         offset += limit;
-        batch++;
         
+        // Safety checks
         if (offset > 10000) {
-          console.warn('Reached maximum user fetch limit (10,000)');
+          console.warn('[LOGIN] Reached maximum search limit (10,000)');
+          break;
+        }
+        
+        // If we got less than the limit, we've reached the end
+        if (users.length < limit) {
+          console.log(`[LOGIN] Reached end of users (got ${users.length} < ${limit})`);
           break;
         }
       }
       
-      // Find user by email (case-insensitive)
-      user = allUsers.find(u =>
-        u.emailAddresses?.some(ea => ea.emailAddress?.toLowerCase() === email.toLowerCase())
-      );
     } catch (apiError) {
-      console.error('Error fetching users:', apiError);
+      console.error('[LOGIN] Error during user search:', apiError);
+      
+      // If it's a timeout or network error, return a specific message
+      if (apiError.code === 'ECONNABORTED' || apiError.message?.includes('timeout')) {
+        return res.status(408).json({
+          success: false,
+          error: 'Search request timed out. Please try again.'
+        });
+      }
+      
       return res.status(500).json({
         success: false,
-        error: 'Failed to fetch users from Clerk'
+        error: 'Failed to search users. Please try again.'
+      });
+    }
+    
+    const searchTime = Date.now() - startTime;
+    console.log(`[LOGIN] Search completed in ${searchTime}ms, checked ${totalChecked} users`);
+    
+    // Check if search timed out
+    if (searchTime >= maxSearchTime) {
+      console.warn(`[LOGIN] Search timed out after ${searchTime}ms`);
+      return res.status(408).json({
+        success: false,
+        error: 'Login search timed out. Please try again or contact support.'
       });
     }
     
     if (!user) {
+      console.log(`[LOGIN] User not found: ${email}`);
       return res.status(400).json({
         success: false,
-        error: 'User not found'
+        error: 'Invalid email or password'
       });
     }
     
-    // Check if user is banned
+    // Quick validation checks
     if (user.banned) {
+      console.log(`[LOGIN] User is banned: ${user.id}`);
       return res.status(401).json({
         success: false,
         error: 'Account is blocked'
       });
     }
     
-    // Check if user has password authentication enabled
-    const hasPassword = user.passwordEnabled;
-    
-    if (!hasPassword) {
+    if (!user.passwordEnabled) {
+      console.log(`[LOGIN] Password not enabled for user: ${user.id}`);
       return res.status(401).json({
         success: false,
-        error: 'User does not have password authentication enabled'
+        error: 'Password authentication not available'
       });
     }
     
-    // Verify password
+    // Fast password verification with timeout
+    console.log(`[LOGIN] Verifying password for user: ${user.id}`);
+    const verifyStart = Date.now();
+    
     try {
-      const verification = await clerk.users.verifyPassword({
+      // Create a promise with timeout for password verification
+      const verificationPromise = clerk.users.verifyPassword({
         userId: user.id,
         password
       });
       
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Password verification timeout')), 5000)
+      );
+      
+      const verification = await Promise.race([verificationPromise, timeoutPromise]);
+      const verifyTime = Date.now() - verifyStart;
+      
+      console.log(`[LOGIN] Password verification completed in ${verifyTime}ms`);
+      
       if (!verification.verified) {
+        console.log(`[LOGIN] Invalid password for user: ${user.id}`);
         return res.status(401).json({
           success: false,
-          error: 'Invalid credentials'
+          error: 'Invalid email or password'
         });
       }
       
-      // If we reach here, authentication was successful
+      const totalTime = Date.now() - startTime;
+      console.log(`[LOGIN] Login successful for ${user.id} in ${totalTime}ms`);
+      
+      // Success response
       return res.json({
         success: true,
         userId: user.id,
@@ -842,20 +911,38 @@ app.post('/auth/login', async (req, res) => {
           firstName: user.firstName,
           lastName: user.lastName,
           emailVerified: user.emailVerified
+        },
+        debug: {
+          searchTime: searchTime,
+          verifyTime: verifyTime,
+          totalTime: totalTime,
+          usersChecked: totalChecked
         }
       });
+      
     } catch (verificationError) {
-      console.error('Password verification error:', verificationError);
+      console.error('[LOGIN] Password verification error:', verificationError);
+      
+      if (verificationError.message === 'Password verification timeout') {
+        return res.status(408).json({
+          success: false,
+          error: 'Authentication timed out. Please try again.'
+        });
+      }
+      
       return res.status(401).json({
         success: false,
         error: 'Authentication failed'
       });
     }
+    
   } catch (error) {
-    console.error('Login validation error:', error);
+    const totalTime = Date.now() - startTime;
+    console.error(`[LOGIN] Login error after ${totalTime}ms:`, error);
+    
     return res.status(500).json({
       success: false,
-      error: 'Internal server error'
+      error: 'Login service temporarily unavailable. Please try again.'
     });
   }
 });
