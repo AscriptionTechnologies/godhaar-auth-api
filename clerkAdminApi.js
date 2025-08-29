@@ -4,7 +4,7 @@ const swaggerUi = require('swagger-ui-express');
 const swaggerJSDoc = require('swagger-jsdoc');
 require('dotenv').config();
 const cors = require('cors');
-// --- Global Error Handlers ---
+
 process.on('uncaughtException', err => {
   console.error('Uncaught Exception:', err);
 });
