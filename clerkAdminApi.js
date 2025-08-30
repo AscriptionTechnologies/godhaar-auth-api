@@ -750,7 +750,7 @@ app.get('/user/email/:email', async (req, res) => {
   }
 });
 
-**
+/**
  * @swagger
  * /user/metadata/{userId}:
  *   patch:
