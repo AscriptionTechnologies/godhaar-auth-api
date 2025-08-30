@@ -583,8 +583,250 @@ app.post('/auth/login', async (req, res) => {
     });
   }
 });
+
+/**
+ * @swagger
+ * /user/email/{email}:
+ *   get:
+ *     summary: Get user ID by email address
+ *     parameters:
+ *       - in: path
+ *         name: email
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Email address to search for
+ *     responses:
+ *       200:
+ *         description: User ID found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 userId:
+ *                   type: string
+ *                   description: The user ID associated with the email
+ *                 email:
+ *                   type: string
+ *                   description: The email address that was searched
+ *       404:
+ *         description: User not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: false
+ *                 error:
+ *                   type: string
+ *                   example: "User not found"
+ *       400:
+ *         description: Invalid email format or error
+ */
+app.get('/user/email/:email', async (req, res) => {
+  try {
+    const { email } = req.params;
     
-  
+    console.log(`[DEBUG] Searching for user with email: ${email}`);
+    
+    if (!email || email.trim() === '') {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Email parameter is required and cannot be empty' 
+      });
+    }
+    
+    // Decode URL-encoded email (in case it contains special characters)
+    const decodedEmail = decodeURIComponent(email.trim());
+    console.log(`[DEBUG] Decoded email: ${decodedEmail}`);
+    
+    // Fetch all users with pagination - using smaller batches for reliability
+    let allUsers = [];
+    let offset = 0;
+    const limit = 100; // Smaller batch size for more reliable fetching
+    let totalFetched = 0;
+    
+    console.log('[DEBUG] Starting to fetch users...');
+    
+    while (true) {
+      try {
+        console.log(`[DEBUG] Fetching batch: offset=${offset}, limit=${limit}`);
+        const users = await clerk.users.getUserList({ limit, offset });
+        
+        console.log(`[DEBUG] Fetched ${users.length} users in this batch`);
+        
+        if (users.length === 0) {
+          console.log('[DEBUG] No more users to fetch');
+          break;
+        }
+        
+        allUsers = allUsers.concat(users);
+        totalFetched += users.length;
+        offset += limit;
+        
+        // Safety check to prevent infinite loops
+        if (offset > 50000) {
+          console.warn('[DEBUG] Reached maximum fetch limit (50,000)');
+          break;
+        }
+        
+        // If we got less than the limit, we've reached the end
+        if (users.length < limit) {
+          console.log(`[DEBUG] Reached end of users (got ${users.length} < ${limit})`);
+          break;
+        }
+        
+      } catch (batchError) {
+        console.error(`[DEBUG] Error fetching batch at offset ${offset}:`, batchError);
+        break;
+      }
+    }
+    
+    console.log(`[DEBUG] Total users fetched: ${totalFetched}`);
+    
+    if (totalFetched === 0) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to fetch any users from Clerk'
+      });
+    }
+    
+    // Log some sample emails for debugging
+    const sampleEmails = allUsers.slice(0, 5).map(u => {
+      const primaryEmail = u.emailAddresses?.[0]?.emailAddress || 'No email';
+      return { userId: u.id, email: primaryEmail };
+    });
+    console.log('[DEBUG] Sample users:', sampleEmails);
+    
+    // Find user by email (case-insensitive exact match)
+    console.log(`[DEBUG] Searching for exact match of: "${decodedEmail.toLowerCase()}"`);
+    
+    const user = allUsers.find(u => {
+      if (!u.emailAddresses || !Array.isArray(u.emailAddresses)) {
+        return false;
+      }
+      
+      return u.emailAddresses.some(ea => {
+        if (!ea || !ea.emailAddress) return false;
+        const userEmail = ea.emailAddress.toLowerCase();
+        const searchEmail = decodedEmail.toLowerCase();
+        console.log(`[DEBUG] Comparing: "${userEmail}" === "${searchEmail}"`);
+        return userEmail === searchEmail;
+      });
+    });
+    
+    if (!user) {
+      console.log(`[DEBUG] User not found for email: ${decodedEmail}`);
+      return res.status(404).json({ 
+        success: false, 
+        error: 'User not found',
+        searchedEmail: decodedEmail,
+        totalUsersSearched: totalFetched
+      });
+    }
+    
+    console.log(`[DEBUG] User found: ${user.id}`);
+    
+    res.json({
+      success: true,
+      userId: user.id,
+      email: user.emailAddresses[0]?.emailAddress,
+      searchedEmail: decodedEmail
+    });
+    
+  } catch (error) {
+    console.error('[ERROR] Get user by email error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: `Internal server error: ${error.message}`,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+**
+ * @swagger
+ * /user/metadata/{userId}:
+ *   patch:
+ *     summary: Update user's unsafe metadata
+ *     parameters:
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               unsafeMetadata:
+ *                 type: object
+ *                 description: Arbitrary metadata to store in Clerk's unsafeMetadata field
+ *                 example:
+ *                   role: "premium"
+ *                   preferences: { theme: "dark", notifications: true }
+ *                   customData: "any value"
+ *     responses:
+ *       200:
+ *         description: User metadata updated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 user:
+ *                   type: object
+ *                   description: Updated user object
+ *       400:
+ *         description: Error updating metadata
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: false
+ *                 error:
+ *                   type: string
+ */
+app.patch('/user/metadata/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { unsafeMetadata } = req.body;
+    
+    if (!unsafeMetadata) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'unsafeMetadata is required in request body' 
+      });
+    }
+    
+    const user = await clerk.users.updateUser(userId, { unsafeMetadata });
+    
+    res.json({ 
+      success: true, 
+      user 
+    });
+  } catch (error) {
+    res.status(400).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
 /**
  * @swagger
  * /debug/user-count:
